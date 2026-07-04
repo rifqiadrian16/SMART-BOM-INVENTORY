@@ -3,7 +3,7 @@ import { useInventory } from '../composables/useInventory'
 
 const { 
   projects, activeProjectId, currentProject, 
-  exportToCSV, resetCurrentStockDB 
+  printOrderReceipt, copyWhatsAppOrder, resetCurrentStockDB 
 } = useInventory()
 
 const emit = defineEmits(['openNewProject'])
@@ -22,7 +22,8 @@ const emit = defineEmits(['openNewProject'])
     </div>
 
     <!-- Actions -->
-    <div class="flex flex-wrap items-center gap-3" v-if="currentProject">
+    <div class="flex flex-wrap items-center gap-2 md:gap-3" v-if="currentProject">
+      <!-- Dropdown Proyek -->
       <div class="flex items-center bg-slate-900 border border-slate-700 rounded-lg p-1">
         <select 
           v-model="activeProjectId" 
@@ -37,12 +38,19 @@ const emit = defineEmits(['openNewProject'])
 
       <div class="h-6 w-px bg-slate-800 hidden md:block"></div>
 
-      <button @click="exportToCSV" class="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 text-sm font-medium px-3.5 py-2 rounded-lg transition flex items-center gap-1.5">
-        <span>🛒</span> Download Order CSV
+      <!-- Tombol Baru 1: Cetak Struk / Simpan PDF -->
+      <button @click="printOrderReceipt" class="bg-sky-600/20 hover:bg-sky-600/30 text-sky-400 border border-sky-500/30 text-sm font-medium px-3 py-2 rounded-lg transition flex items-center gap-1.5 shadow-sm" title="Cetak struk belanja atau simpan sebagai PDF">
+        <span>🖨️</span> Cetak Struk Order
+      </button>
+
+      <!-- Tombol Baru 2: Copy Format WhatsApp -->
+      <button @click="copyWhatsAppOrder" class="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 text-sm font-medium px-3 py-2 rounded-lg transition flex items-center gap-1.5 shadow-sm" title="Salin daftar belanja format teks WhatsApp">
+        <span>📋</span> Copy List WA
       </button>
       
+      <!-- Reset Stok -->
       <button @click="resetCurrentStockDB" class="bg-slate-800 hover:bg-slate-700 text-amber-400 text-sm px-3 py-2 rounded-lg transition border border-slate-700" title="Reset semua stok di proyek ini ke 0">
-        ⚠️ Reset Stok
+        ⚠️ Reset
       </button>
     </div>
   </header>

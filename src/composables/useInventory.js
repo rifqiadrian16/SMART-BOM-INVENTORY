@@ -1,13 +1,11 @@
 import { ref, computed } from 'vue'
 import { supabase } from '../supabase'
 
-// State Global
 const projects = ref([])
 const activeProjectId = ref(null)
 const isLoading = ref(true)
 
 export function useInventory() {
-  // 1. Fetch data dari Supabase (Projects beserta BOM items-nya)
   const fetchProjects = async () => {
     isLoading.value = true
     const { data, error } = await supabase
@@ -26,7 +24,6 @@ export function useInventory() {
     isLoading.value = false
   }
 
-  // Jika state kosong, otomatis fetch saat composable dipanggil
   if (projects.value.length === 0) {
     fetchProjects()
   }
@@ -35,7 +32,6 @@ export function useInventory() {
     return projects.value.find(p => p.id === activeProjectId.value) || projects.value[0] || null
   })
 
-  // 2. Kalkulasi jumlah order + Buffer 30%
   const calculateOrder = (item) => {
     if (!currentProject.value) return 0
     const totalNeed = item.qty_per_pcb * currentProject.value.target_pcb
@@ -45,7 +41,6 @@ export function useInventory() {
     return item.auto_buffer ? Math.ceil(deficit * 1.3) : deficit
   }
 
-  // 3. Update komponen langsung ke Database (Stok, Harga, atau Nama)
   const updateItemDB = async (item) => {
     const { error } = await supabase
       .from('bom_items')
@@ -63,7 +58,6 @@ export function useInventory() {
     if (error) console.error('Gagal update item:', error)
   }
 
-  // 4. Tambah komponen baru ke proyek saat ini
   const addItemDB = async (newItemData) => {
     if (!currentProject.value) return
     const { data, error } = await supabase
@@ -76,7 +70,6 @@ export function useInventory() {
     }
   }
 
-  // 5. Hapus komponen dari Database
   const deleteItemDB = async (id) => {
     if (confirm('Hapus komponen ini dari list?')) {
       const { error } = await supabase.from('bom_items').delete().eq('id', id)
@@ -86,7 +79,6 @@ export function useInventory() {
     }
   }
 
-  // 6. Buat Proyek Baru di Database
   const createProjectDB = async (name, targetPcb) => {
     const { data: newProj, error: projErr } = await supabase
       .from('projects')
@@ -94,7 +86,6 @@ export function useInventory() {
       .select()
 
     if (!projErr && newProj) {
-      // Duplikasi template komponen dari proyek pertama ke proyek baru (dengan stok = 0)
       if (projects.value.length > 0) {
         const baseItems = projects.value[0].bom_items.map(i => ({
           project_id: newProj[0].id,
@@ -118,7 +109,6 @@ export function useInventory() {
     }
   }
 
-  // 7. Reset Semua Stok di Proyek Saat Ini
   const resetCurrentStockDB = async () => {
     if (!currentProject.value) return
     if (confirm(`Reset semua stok di proyek "${currentProject.value.name}" ke 0?`)) {
@@ -133,31 +123,133 @@ export function useInventory() {
     }
   }
 
-  // 8. Export ke CSV (Tetap sama, disesuaikan dengan penamaan kolom baru)
-  const exportToCSV = () => {
+  // FITUR BARU 1: Cetak Struk Order (Print / Simpan PDF) - HANYA BARANG KURANG
+  const printOrderReceipt = () => {
     if (!currentProject.value) return
-    let csvContent = "data:text/csv;charset=utf-8,"
-    csvContent += "Kategori,Nama Komponen,Package,Butuh per PCB,Target PCB,Total Butuh,Stok Saat Ini,WAJIB ORDER (Pcs),Est. Harga Satuan,Subtotal Harga\r\n"
+    
+    // Filter HANYA barang yang butuh diorder
+    const itemsToOrder = currentProject.value.bom_items.filter(item => calculateOrder(item) > 0)
+    
+    if (itemsToOrder.length === 0) {
+      alert('🎉 Semua stok komponen untuk proyek ini sudah AMAN! Tidak ada yang perlu diorder.')
+      return
+    }
 
-    currentProject.value.bom_items.forEach(item => {
-      const orderQty = calculateOrder(item)
-      if (orderQty > 0) {
-        const row = [
-          `"${item.category}"`, `"${item.name}"`, `"${item.package}"`,
-          item.qty_per_pcb, currentProject.value.target_pcb, (item.qty_per_pcb * currentProject.value.target_pcb),
-          (item.stock || 0), orderQty, (item.price || 0), (orderQty * (item.price || 0))
-        ].join(",")
-        csvContent += row + "\r\n"
-      }
+    let totalBudget = 0
+    let rowsHtml = ''
+    
+    itemsToOrder.forEach((item, idx) => {
+      const qty = calculateOrder(item)
+      const subtotal = qty * (item.price || 0)
+      totalBudget += subtotal
+      rowsHtml += `
+        <tr>
+          <td style="text-align: center;">${idx + 1}</td>
+          <td>
+            <strong>${item.name}</strong><br/>
+            <small style="color: #666;">${item.category} | ${item.package}</small>
+          </td>
+          <td style="text-align: center; font-weight: bold; font-size: 14px;">${qty} pcs</td>
+          <td style="text-align: right;">Rp ${new Intl.NumberFormat('id-ID').format(item.price || 0)}</td>
+          <td style="text-align: right; font-weight: bold;">Rp ${new Intl.NumberFormat('id-ID').format(subtotal)}</td>
+        </tr>
+      `
     })
 
-    const encodedUri = encodeURI(csvContent)
-    const link = document.createElement("a")
-    link.setAttribute("href", encodedUri)
-    link.setAttribute("download", `Order_List_${currentProject.value.name.replace(/\s+/g, '_')}.csv`)
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
+    const printWindow = window.open('', '_blank')
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Struk Order - ${currentProject.value.name}</title>
+          <style>
+            body { font-family: 'Courier New', Courier, monospace; padding: 20px; color: #111; max-width: 700px; margin: 0 auto; }
+            .header { text-align: center; border-bottom: 2px dashed #333; padding-bottom: 15px; margin-bottom: 20px; }
+            .header h1 { margin: 0; font-size: 22px; text-transform: uppercase; }
+            .header p { margin: 5px 0 0; font-size: 12px; color: #555; }
+            .meta { font-size: 13px; margin-bottom: 15px; display: flex; justify-content: space-between; }
+            table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 20px; }
+            th { border-bottom: 1px solid #333; padding: 8px 4px; text-align: left; background: #f4f4f4; }
+            td { padding: 10px 4px; border-bottom: 1px dotted #ccc; vertical-align: top; }
+            .total-box { border-top: 2px dashed #333; padding-top: 15px; text-align: right; font-size: 16px; }
+            .total-box strong { font-size: 20px; }
+            .footer { text-align: center; margin-top: 30px; font-size: 11px; color: #777; border-top: 1px solid #eee; padding-top: 15px; }
+            @media print {
+              body { padding: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>⚡ STRUK ORDER KOMPONEN ⚡</h1>
+            <p>Daftar belanja material yang wajib dipesan (Sudah termasuk +30% Buffer)</p>
+          </div>
+          <div class="meta">
+            <div><strong>Proyek:</strong> ${currentProject.value.name}</div>
+            <div><strong>Target:</strong> ${currentProject.value.target_pcb} Board PCB</div>
+            <div><strong>Tanggal:</strong> ${new Date().toLocaleDateString('id-ID')}</div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 30px; text-align: center;">No</th>
+                <th>Nama Komponen & Spek</th>
+                <th style="text-align: center;">Jml Order</th>
+                <th style="text-align: right;">Harga @</th>
+                <th style="text-align: right;">Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+          <div class="total-box">
+            Total Estimasi Biaya:<br/>
+            <strong>Rp ${new Intl.NumberFormat('id-ID').format(totalBudget)}</strong>
+          </div>
+          <div class="footer">
+            * Cek kembali package/footprint fisik (SMD/THT) sebelum membayar ke supplier.<br/>
+            Digenerate otomatis oleh Smart BOM & Inventory System.
+          </div>
+          <script>
+            window.onload = () => { window.print(); }
+          </script>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+  }
+
+  // FITUR BARU 2: Copy Format WhatsApp (Siap Kirim ke Toko / Admin WA)
+  const copyWhatsAppOrder = () => {
+    if (!currentProject.value) return
+    const itemsToOrder = currentProject.value.bom_items.filter(item => calculateOrder(item) > 0)
+    
+    if (itemsToOrder.length === 0) {
+      alert('🎉 Semua stok komponen aman! Tidak ada list untuk dicopy.')
+      return
+    }
+
+    let waText = `*⚡ LIST ORDER KOMPONEN (${currentProject.value.name.toUpperCase()}) ⚡*\n`
+    waText += `Target Perakitan: ${currentProject.value.target_pcb} Board PCB\n\n`
+    waText += `Halo Gan/Min, mau order komponen elektronik berikut ya:\n\n`
+    
+    let totalBudget = 0
+    itemsToOrder.forEach((item, idx) => {
+      const qty = calculateOrder(item)
+      const subtotal = qty * (item.price || 0)
+      totalBudget += subtotal
+      waText += `${idx + 1}. *${item.name}* (${item.package})\n`
+      waText += `    └ 🛒 Order: *${qty} pcs* (@ Rp ${new Intl.NumberFormat('id-ID').format(item.price || 0)})\n`
+    })
+
+    waText += `\n---------------------------------\n`
+    waText += `*Total Perkiraan: Rp ${new Intl.NumberFormat('id-ID').format(totalBudget)}*\n`
+    waText += `---------------------------------\n`
+    waText += `Mohon dicek ketersediaan stoknya. Terima kasih! 🙏`
+
+    navigator.clipboard.writeText(waText).then(() => {
+      alert('✅ Daftar order berhasil disalin ke Clipboard! Tinggal Paste (Ctrl+V) di WhatsApp admin toko.')
+    }).catch(() => {
+      alert('Gagal menyalin. Pastikan izin clipboard aktif di browser.')
+    })
   }
 
   return {
@@ -172,6 +264,7 @@ export function useInventory() {
     deleteItemDB,
     createProjectDB,
     resetCurrentStockDB,
-    exportToCSV
+    printOrderReceipt,
+    copyWhatsAppOrder
   }
 }
